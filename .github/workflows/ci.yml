@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  # Demucs v4.1.0's htdemucs_6s weights, as the Demucs project publishes them.
+  WEIGHTS_URL: https://huggingface.co/adefossez/HTDemucs-6s/resolve/3c5ee475be622df764938de97e4281a7b07ffa58/5c90dfd2.safetensors
+  WEIGHTS_SHA256: d2a1745f0744721f6b8ca5bf469b67c651ea5ed1b52998cab033b2158609d411
+
+jobs:
+  desktop:
+    name: Build and test (Linux, real model, software GPU)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Vulkan headers, a software GPU (llvmpipe) and the shader compiler
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libvulkan-dev mesa-vulkan-drivers glslang-tools >/dev/null
+      - name: Build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j"$(nproc)"
+      - name: The shaders compile
+        run: for f in src/compute/shaders/*.comp; do glslangValidator -V --target-env vulkan1.1 -o /dev/null "$f"; done
+      - name: GPU against CPU (software GPU)
+        run: SD_GPU_ALLOW_CPU=1 build/sdgpu_test
+      - uses: actions/cache@v4
+        with:
+          path: weights
+          key: weights-${{ env.WEIGHTS_SHA256 }}
+      - name: Download and check the weights
+        run: |
+          mkdir -p weights
+          [ -f weights/htdemucs_6s.safetensors ] || curl -fsSL --retry 3 -o weights/htdemucs_6s.safetensors "$WEIGHTS_URL"
+          echo "$WEIGHTS_SHA256  weights/htdemucs_6s.safetensors" | sha256sum -c -
+      - name: Separate with the real model
+        run: |
+          pip install --quiet numpy pyloudnorm
+          python3 scripts/engine_test.py build/sdengine_cli weights/htdemucs_6s.safetensors build/engine-test
+      - name: Full separation, GPU against CPU (software GPU)
+        run: |
+          build/sdbench_cli song 20 song.f32
+          mkdir -p out-gpu out-cpu
+          SD_GPU_ALLOW_CPU=1 build/sdengine_cli separate weights/htdemucs_6s.safetensors song.f32 out-gpu 2
+          SD_NO_GPU=1 build/sdengine_cli separate weights/htdemucs_6s.safetensors song.f32 out-cpu 2
+          python3 - <<'PY'
+          import numpy as np
+          worst = 1e9
+          for s in ["drums", "bass", "other", "vocals", "guitar", "piano"]:
+              a = np.fromfile(f"out-cpu/{s}.wav", np.int16, offset=44).astype(float)
+              b = np.fromfile(f"out-gpu/{s}.wav", np.int16, offset=44).astype(float)
+              n = min(len(a), len(b))
+              snr = 10 * np.log10((a[:n] ** 2).sum() / max(((a[:n] - b[:n]) ** 2).sum(), 1e-9))
+              worst = min(worst, snr)
+              print(f"{s}: GPU vs CPU {snr:.1f} dB")
+          assert worst > 50, "GPU output differs from the CPU's"
+          PY
+
+  android:
+    name: Build for Android (arm64, with the JNI binding)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Build
+        run: |
+          cmake -S . -B build-android -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-29 -DANDROID_STL=c++_shared \
+            -DSDENGINE_JNI=ON
+          cmake --build build-android -j"$(nproc)"
+          ls -la build-android/libsdengine_jni.so

@@ -1,0 +1,5 @@
+build/
+*.f32
+*.wav
+*.safetensors
+*.bin
