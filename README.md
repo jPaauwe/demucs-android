@@ -108,6 +108,23 @@ The tools are:
 
 ## Measurements
 
+On a **Samsung Galaxy S24** (SM-S921B: Exynos 2400, 10 cores, Xclipse 940
+GPU, 8 GB, Android 16), a 1:26 song, all six stems, 6 segments at once,
+measured with StemDeck Compare (build 25), run one after the other:
+
+| Engine | Time | Song length | Speed-up | Peak memory | Thermal status |
+|---|---|---|---|---|---|
+| StemDeck builds 4–10: 24 s chunks, one core per chunk | 150.1 s | 1.73x | 1.00x | 2.58 GB | none → light |
+| StemDeck build 13: Demucs' 7.8 s segments, one core per segment | 66.8 s | 0.77x | 2.25x | 3.54 GB | light → moderate |
+| **this engine**: v4.1.0 weights, every core, GPU on | **45.2 s** | **0.52x** | **3.32x** | 3.34 GB | moderate |
+
+This engine separates the song in about half its length, 1.5x faster than
+build 13 even though the phone was already warm when it ran. Its stems are
+identical to build 13's (101 dB SNR over all stems). Builds 4–10 differ from
+both by about 18 dB, because they cut the song into 24 s chunks with a time
+shift each; that is the same kind of difference two runs of PyTorch Demucs
+show.
+
 On a 2-core x86 computer, 20-second song, all six stems:
 
 | Engine | Time | Peak memory |
@@ -116,9 +133,9 @@ On a 2-core x86 computer, 20-second song, all six stems:
 | this engine before the thread pool and GPU, 2 segments at once | 63 s | 1.5 GB |
 | this engine, 1 segment at once using both cores | 70 s (vs 103 s without the pool) | 0.8 GB |
 
-Phone measurements are welcome. The GPU shaders are portable but not yet
-tuned for any particular phone GPU (Adreno, Mali, Xclipse), so measure CPU
-only against CPU + GPU on yours.
+The GPU shaders are portable but not yet tuned for any particular phone GPU
+(Adreno, Mali, Xclipse), so compare `gpu = false` against the default on
+yours.
 
 ## Layout
 
